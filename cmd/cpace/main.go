@@ -19,7 +19,11 @@ func main() {
 
 	mapToCurve := func(pass string) *ristretto255.Element {
 		var e ristretto255.Element
-		return e.FromUniformBytes(hash64(pass))
+		_, err := e.SetUniformBytes(hash64(pass))
+		if err != nil {
+			panic(err)
+		}
+		return &e
 	}
 	fmt.Print("testing with map_to_curve... ")
 	if err := guess(mapToCurve, "baz", list...); err != nil {
@@ -29,7 +33,10 @@ func main() {
 
 	notMapToCurve := func(pass string) *ristretto255.Element {
 		var s ristretto255.Scalar
-		s.FromUniformBytes(hash64(pass))
+		_, err := s.SetUniformBytes(hash64(pass))
+		if err != nil {
+			panic(err)
+		}
 		var e ristretto255.Element
 		return e.ScalarBaseMult(&s)
 	}
@@ -48,7 +55,7 @@ func guess(mapToCurve func(string) *ristretto255.Element, pass string, guesses .
 	// He sends over MSGa (Ya) using his guess at what the
 	// password is.
 	var ya ristretto255.Scalar
-	ya.FromUniformBytes(randBytes(64))
+	ya.SetUniformBytes(randBytes(64))
 	var Ya ristretto255.Element
 	Ya.ScalarMult(&ya, mapToCurve(guesses[0])) // send to Bob
 
@@ -57,7 +64,7 @@ func guess(mapToCurve func(string) *ristretto255.Element, pass string, guesses .
 	// He sends MSGb (Yb) to Alice (and subsequently the
 	// attacker).
 	var yb ristretto255.Scalar
-	yb.FromUniformBytes(randBytes(64))
+	yb.SetUniformBytes(randBytes(64))
 	var Yb ristretto255.Element
 	Yb.ScalarMult(&yb, mapToCurve(pass)) // send to "Alice"
 
@@ -65,19 +72,14 @@ func guess(mapToCurve func(string) *ristretto255.Element, pass string, guesses .
 	// encrypts some plaintext.
 	var K ristretto255.Element
 	K.ScalarMult(&yb, &Ya)
-	ISK := hash32(K.Encode(nil))
-	ct := seal(ISK, []byte("hello, world!"))
-
-	// The attacker receives MSGb (Yb) and attempts to compute
-	// the ISK.
-	K.ScalarMult(&ya, &Yb)
-	ISK = hash32(K.Encode(nil))
+	ISK := hash32(K.Bytes())
+	ciphertext := seal(ISK, []byte("hello, world!"))
 
 	// If CPace is working correctly then the attacker should not
 	// be able to continue his attack past the first guess.
 
 	var s ristretto255.Scalar
-	s.FromUniformBytes(hash64(guesses[0]))
+	s.SetUniformBytes(hash64(guesses[0]))
 	for _, guess := range guesses {
 		// Without map_to_curve the attacker can calculate
 		//    ya_i = H(p) * H(p_i)^-1 * ya
@@ -87,18 +89,21 @@ func guess(mapToCurve func(string) *ristretto255.Element, pass string, guesses .
 		// the attacker can simply save Yb and test each
 		// candidate password offline.
 		var yai ristretto255.Scalar
-		yai.FromUniformBytes(hash64(guess)).
-			Invert(&yai).
+		_, err := yai.SetUniformBytes(hash64(guess))
+		if err != nil {
+			return err
+		}
+		yai.Invert(&yai).
 			Multiply(&yai, &s).
 			Multiply(&yai, &ya)
 
 		var K ristretto255.Element
 		K.ScalarMult(&yai, &Yb)
-		ISK := hash32(K.Encode(nil))
+		ISK := hash32(K.Bytes())
 
-		pt, err := open(ISK, ct)
+		plaintext, err := open(ISK, ciphertext)
 		if err == nil {
-			return fmt.Errorf("recovered plaintext: %q", pt)
+			return fmt.Errorf("recovered plaintext: %q", plaintext)
 		}
 	}
 	return nil
