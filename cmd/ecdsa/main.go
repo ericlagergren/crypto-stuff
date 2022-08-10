@@ -16,7 +16,7 @@ import (
 	"io"
 	"math/big"
 
-	l3 "github.com/elagergren/ctb/lll"
+	l3 "github.com/ericlagergren/ctb/lll"
 	"golang.org/x/crypto/chacha20"
 )
 
